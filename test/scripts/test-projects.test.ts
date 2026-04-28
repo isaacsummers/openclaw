@@ -241,8 +241,8 @@ describe("scripts/test-projects changed-target routing", () => {
     ).toBeNull();
   });
 
-  it("routes channel helper edits through the tests that import them", () => {
-    expect(resolveChangedTestTargetPlan(["test/helpers/channels/directory-ids.ts"])).toEqual({
+  it("routes channel SDK helper edits through the tests that import them", () => {
+    expect(resolveChangedTestTargetPlan(["src/plugin-sdk/test-helpers/directory-ids.ts"])).toEqual({
       mode: "targets",
       targets: [
         "extensions/discord/src/directory-contract.test.ts",
