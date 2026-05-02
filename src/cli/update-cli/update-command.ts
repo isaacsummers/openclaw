@@ -10,6 +10,7 @@ import {
 import { doctorCommand } from "../../commands/doctor.js";
 import {
   ConfigMutationConflictError,
+  mutateConfigFile,
   readConfigFileSnapshot,
   replaceConfigFile,
   resolveGatewayPort,
@@ -1149,45 +1150,44 @@ async function persistRequestedUpdateChannel(params: {
     return params.configSnapshot;
   }
 
-  const next = {
-    ...params.configSnapshot.sourceConfig,
-    update: {
-      ...params.configSnapshot.sourceConfig.update,
-      channel: params.requestedChannel,
-    },
-  };
   try {
-    await replaceConfigFile({
-      nextConfig: next,
+    await mutateConfigFile({
+      base: "runtime",
       baseHash: params.configSnapshot.hash,
+      mutate: (draft) => {
+        draft.update = {
+          ...draft.update,
+          channel: params.requestedChannel,
+        };
+      },
     });
-    return createUpdatedChannelSnapshot(params.configSnapshot, next);
   } catch (error) {
     if (!(error instanceof ConfigMutationConflictError)) {
       throw error;
     }
+    const refreshed = await readConfigFileSnapshot();
+    if (!refreshed.valid) {
+      return refreshed;
+    }
+    const refreshedChannel = normalizeUpdateChannel(refreshed.config.update?.channel);
+    if (refreshedChannel === params.requestedChannel) {
+      return refreshed;
+    }
+    await mutateConfigFile({
+      base: "runtime",
+      baseHash: refreshed.hash,
+      mutate: (draft) => {
+        draft.update = {
+          ...draft.update,
+          channel: params.requestedChannel,
+        };
+      },
+    });
   }
-
-  const refreshed = await readConfigFileSnapshot();
-  if (!refreshed.valid) {
-    return refreshed;
-  }
-  const refreshedChannel = normalizeUpdateChannel(refreshed.config.update?.channel);
-  if (refreshedChannel === params.requestedChannel) {
-    return refreshed;
-  }
-  const refreshedNext = {
-    ...refreshed.sourceConfig,
-    update: {
-      ...refreshed.sourceConfig.update,
-      channel: params.requestedChannel,
-    },
-  };
-  await replaceConfigFile({
-    nextConfig: refreshedNext,
-    baseHash: refreshed.hash,
+  return createUpdatedChannelSnapshot(params.configSnapshot, {
+    ...params.configSnapshot.sourceConfig,
+    update: { ...params.configSnapshot.sourceConfig.update, channel: params.requestedChannel },
   });
-  return createUpdatedChannelSnapshot(refreshed, refreshedNext);
 }
 
 function createUpdatedChannelSnapshot(
