@@ -1,0 +1,63 @@
+name: Notify on upstream release
+
+on:
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+
+jobs:
+  check-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Fetch latest upstream release tag
+        id: upstream
+        run: |
+          VERSION=$(curl -sf https://api.github.com/repos/openclaw/openclaw/releases/latest | jq -r .tag_name)
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Fetch last notified version
+        id: last
+        run: |
+          CONTENT=$(curl -sf \
+            -H "Authorization: Bearer ${{ secrets.GH_TOKEN }}" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/isaacsummers/openclaw/contents/.last-notified" \
+            | jq -r '.content // empty' | base64 -d || echo "")
+          echo "last=$CONTENT" >> $GITHUB_OUTPUT
+
+      - name: Fire hook if new release detected
+        if: steps.upstream.outputs.version != steps.last.outputs.last && steps.upstream.outputs.version != ''
+        run: |
+          curl -sf -X POST https://hooks.oca.isaacsummers.com/hooks/openclaw-release \
+            -H "Authorization: Bearer ${{ secrets.OPENCLAW_HOOKS_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            -d '{}'
+          echo "Fired hook for ${{ steps.upstream.outputs.version }}"
+
+      - name: Update last notified version
+        if: steps.upstream.outputs.version != steps.last.outputs.last && steps.upstream.outputs.version != ''
+        run: |
+          CONTENT=$(printf '%s' "${{ steps.upstream.outputs.version }}" | base64 -w 0)
+
+          # Get current SHA if file exists (required for updates)
+          SHA=$(curl -sf \
+            -H "Authorization: Bearer ${{ secrets.GH_TOKEN }}" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/isaacsummers/openclaw/contents/.last-notified" \
+            | jq -r '.sha // empty' || echo "")
+
+          if [ -n "$SHA" ]; then
+            PAYLOAD="{\"message\":\"chore: update last notified to ${{ steps.upstream.outputs.version }}\",\"content\":\"$CONTENT\",\"sha\":\"$SHA\"}"
+          else
+            PAYLOAD="{\"message\":\"chore: init last notified to ${{ steps.upstream.outputs.version }}\",\"content\":\"$CONTENT\"}"
+          fi
+
+          curl -sf -X PUT \
+            -H "Authorization: Bearer ${{ secrets.GH_TOKEN }}" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/isaacsummers/openclaw/contents/.last-notified" \
+            -d "$PAYLOAD"
+          echo "Updated .last-notified to ${{ steps.upstream.outputs.version }}"
