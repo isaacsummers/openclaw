@@ -31,7 +31,7 @@ jobs:
       - name: Fire hook if new release detected
         if: steps.upstream.outputs.version != steps.last.outputs.last && steps.upstream.outputs.version != ''
         run: |
-          curl -sf -X POST https://hooks.oca.isaacsummers.com/hooks/openclaw-release \
+          curl -sf -X POST https://oca.isaacsummers.com/hooks/openclaw-release \
             -H "Authorization: Bearer ${{ secrets.OPENCLAW_HOOKS_TOKEN }}" \
             -H "Content-Type: application/json" \
             -d '{}'
