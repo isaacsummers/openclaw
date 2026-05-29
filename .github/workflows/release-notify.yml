@@ -34,7 +34,7 @@ jobs:
           curl -sf -X POST https://oca.isaacsummers.com/hooks/openclaw-release \
             -H "Authorization: Bearer ${{ secrets.OPENCLAW_HOOKS_TOKEN }}" \
             -H "Content-Type: application/json" \
-            -d '{}'
+            -d "{\"version\":\"${{ steps.upstream.outputs.version }}\",\"prerelease\":$(echo '${{ steps.upstream.outputs.version }}' | grep -q 'beta\|alpha\|rc' && echo true || echo false)}"
           echo "Fired hook for ${{ steps.upstream.outputs.version }}"
 
       - name: Update last notified version
