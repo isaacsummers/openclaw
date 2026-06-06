@@ -12,11 +12,17 @@ jobs:
       contents: write
 
     steps:
-      - name: Fetch latest upstream release tag
+      - name: Fetch latest upstream release
         id: upstream
         run: |
-          VERSION=$(curl -sf https://api.github.com/repos/openclaw/openclaw/releases?per_page=1 | jq -r '.[0].tag_name')
+          RELEASE=$(curl -sf "https://api.github.com/repos/openclaw/openclaw/releases?per_page=1")
+          VERSION=$(echo "$RELEASE" | jq -r '.[0].tag_name')
+          PRERELEASE=$(echo "$RELEASE" | jq -r '.[0].prerelease')
+          BODY=$(echo "$RELEASE" | jq -r '.[0].body // ""')
           echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "prerelease=$PRERELEASE" >> $GITHUB_OUTPUT
+          # Encode body as base64 to survive multiline in step outputs
+          echo "body=$(echo "$BODY" | base64 -w 0)" >> $GITHUB_OUTPUT
 
       - name: Fetch last notified version
         id: last
@@ -30,34 +36,56 @@ jobs:
 
       - name: Fire hook if new release detected
         if: steps.upstream.outputs.version != steps.last.outputs.last && steps.upstream.outputs.version != ''
+        env:
+          VERSION: ${{ steps.upstream.outputs.version }}
+          PRERELEASE: ${{ steps.upstream.outputs.prerelease }}
+          BODY_B64: ${{ steps.upstream.outputs.body }}
+          PREV_VERSION: ${{ steps.last.outputs.last }}
+          HOOKS_TOKEN: ${{ secrets.OPENCLAW_HOOKS_TOKEN }}
         run: |
+          BODY=$(echo "$BODY_B64" | base64 -d)
+          PAYLOAD=$(jq -n \
+            --arg version "$VERSION" \
+            --argjson prerelease "$PRERELEASE" \
+            --arg prev_version "$PREV_VERSION" \
+            --arg body "$BODY" \
+            '{version: $version, prerelease: $prerelease, prev_version: $prev_version, body: $body}')
           curl -sf -X POST https://oca.isaacsummers.com/hooks/openclaw-release \
-            -H "Authorization: Bearer ${{ secrets.OPENCLAW_HOOKS_TOKEN }}" \
+            -H "Authorization: Bearer $HOOKS_TOKEN" \
             -H "Content-Type: application/json" \
-            -d "{\"version\":\"${{ steps.upstream.outputs.version }}\",\"prerelease\":$(echo '${{ steps.upstream.outputs.version }}' | grep -q 'beta\|alpha\|rc' && echo true || echo false)}"
-          echo "Fired hook for ${{ steps.upstream.outputs.version }}"
+            -d "$PAYLOAD"
+          echo "Fired hook for $VERSION (prev: $PREV_VERSION)"
 
       - name: Update last notified version
         if: steps.upstream.outputs.version != steps.last.outputs.last && steps.upstream.outputs.version != ''
+        env:
+          VERSION: ${{ steps.upstream.outputs.version }}
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
         run: |
-          CONTENT=$(printf '%s' "${{ steps.upstream.outputs.version }}" | base64 -w 0)
+          CONTENT=$(printf '%s' "$VERSION" | base64 -w 0)
 
-          # Get current SHA if file exists (required for updates)
           SHA=$(curl -sf \
-            -H "Authorization: Bearer ${{ secrets.GH_TOKEN }}" \
+            -H "Authorization: Bearer $GH_TOKEN" \
             -H "Accept: application/vnd.github+json" \
             "https://api.github.com/repos/isaacsummers/openclaw/contents/.last-notified" \
             | jq -r '.sha // empty' || echo "")
 
           if [ -n "$SHA" ]; then
-            PAYLOAD="{\"message\":\"chore: update last notified to ${{ steps.upstream.outputs.version }}\",\"content\":\"$CONTENT\",\"sha\":\"$SHA\"}"
+            PAYLOAD=$(jq -n \
+              --arg msg "chore: update last notified to $VERSION" \
+              --arg content "$CONTENT" \
+              --arg sha "$SHA" \
+              '{message: $msg, content: $content, sha: $sha}')
           else
-            PAYLOAD="{\"message\":\"chore: init last notified to ${{ steps.upstream.outputs.version }}\",\"content\":\"$CONTENT\"}"
+            PAYLOAD=$(jq -n \
+              --arg msg "chore: init last notified to $VERSION" \
+              --arg content "$CONTENT" \
+              '{message: $msg, content: $content}')
           fi
 
           curl -sf -X PUT \
-            -H "Authorization: Bearer ${{ secrets.GH_TOKEN }}" \
+            -H "Authorization: Bearer $GH_TOKEN" \
             -H "Accept: application/vnd.github+json" \
             "https://api.github.com/repos/isaacsummers/openclaw/contents/.last-notified" \
             -d "$PAYLOAD"
-          echo "Updated .last-notified to ${{ steps.upstream.outputs.version }}"
+          echo "Updated .last-notified to $VERSION"
